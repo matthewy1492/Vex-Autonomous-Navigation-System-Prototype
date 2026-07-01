@@ -95,7 +95,7 @@ ypos = [0.0]
 #Format: list (degree = unit)
 #Default: append reading from inertia sensor as initial heading
 #Uses: turn_to(), update_rotation(), get_pos(), go_to()
-rotations = [drivetrain_inertial.rotation(DEGREES)]
+headings = [drivetrain_inertial.rotation(DEGREES)]
 
 #Function: storage – stores last gps reading of robot location in coordinate system with (0,0) at bottom left corner
 #Format: list (mm = unit)
@@ -226,52 +226,73 @@ autonodomvariance = 0.5 * autondisplacement**2 + 2 * autonangle**2
 """configure useful robot actions"""
 
 def turn_to(degree):
-    global headingtolerance, rotations
+    global headingtolerance, headings
+    global turnvelocity, turnmax
+
+    brain.screen.print("VEXcode")
+
+    #get target heading
+    targetheading = degree
+    
+    #get current heading
+    update_headings()
+    currentheading = headings[-1]
 
     #calculate necessary turn amount
-    difference = (degree - rotations[-1] + 180) % 360 - 180
+    difference = (targetheading - currentheading + 180) % 360 - 180
 
     #while loop to turn until target heading has been reached
     while abs(difference) > headingtolerance:
         #sets turn speed based on turn amount required, capped between 10 & 50
-        speed = max(10, min(50, abs(difference)*1.5))
-        left_drive_bottom.set_velocity(speed, PERCENT)
+        speed = max(1, min(turnmax, abs(difference)*turnvelocity))
+        left1.set_velocity(speed, PERCENT)
+        left2.set_velocity(speed, PERCENT)
         left3.set_velocity(speed, PERCENT)
-        right_drive_bottom.set_velocity(speed, PERCENT)
+        right1.set_velocity(speed, PERCENT)
+        right2.set_velocity(speed, PERCENT)
         right3.set_velocity(speed, PERCENT)
 
         #initiates turn
         if difference > 0:
-            left_drive_bottom.spin(REVERSE)
-            left3.spin(REVERSE)
-            right_drive_bottom.spin(FORWARD)
-            right3.spin(FORWARD)
-        else: 
-            left_drive_bottom.spin(FORWARD)
+            left1.spin(FORWARD)
+            left2.spin(FORWARD)
             left3.spin(FORWARD)
-            right_drive_bottom.spin(REVERSE)
+            right1.spin(REVERSE)
+            right2.spin(REVERSE)
             right3.spin(REVERSE)
+        else: 
+            left1.spin(REVERSE)
+            left2.spin(REVERSE)
+            left3.spin(REVERSE)
+            right1.spin(FORWARD)
+            right2.spin(FORWARD)
+            right3.spin(FORWARD)
 
         #wait to carry out turn
-        wait(10, MSEC)
+        wait(20, MSEC)
 
         #updates turn
-        update_rotation()
-        difference = (degree - rotations[-1] + 180) % 360 - 180
+        brain.screen.next_row()
+        update_headings()
+        currentheading = headings[-1]
+        difference = (targetheading - currentheading + 180) % 360 - 180
 
     #stop rotation
-    left_drive_bottom.stop()
+    left1.stop()
+    left2.stop()
     left3.stop()
-    right_drive_bottom.stop()
+    right1.stop()
+    right2.stop()
     right3.stop()
+    
 
 """coordinate locationing system"""
 
 def update_rotation():
-    global rotations
-    rotations.append(drivetrain_inertial.rotation(DEGREES))
-    if len(rotations) > 5:
-        rotations.pop(0)
+    global headings
+    headings.append(drivetrain_inertial.rotation(DEGREES))
+    if len(headings) > 5:
+        headings.pop(0)
 
 
 def use_odom(difx, dify, heading, angle):
@@ -413,7 +434,7 @@ def use_gps():
     return [gpsx, gpsy, gpsvariance]
 
 def get_pos():
-    global positioningloopfrequency, rotations
+    global positioningloopfrequency, headings
 
     #take basic measurements
     difx = degrees_to_distance(xtracking_wheel.position(DEGREES), trackingwheelradius) #travel distance
@@ -421,7 +442,7 @@ def get_pos():
     speed = abs(dify) * (1000 / positioningloopfrequency) #robot traveling velocity
     update_rotation()
     heading = drivetrain_bottom.heading(DEGREES)%360 #robot orientation heading
-    angle = (rotations[-1] - rotations[-2] + 180) % 360 - 180 #turn angle of robot
+    angle = (headings[-1] - headings[-2] + 180) % 360 - 180 #turn angle of robot
 
     #reset sensors
     xtracking_wheel.set_position(0, DEGREES)
@@ -455,7 +476,7 @@ def get_pos():
 def get_pos2():
     global xpos, ypos
     global oldgpsx, oldgpsy
-    global positioningloopfrequency, rotations, loopcount, gpsloopfrequency, odomruntime
+    global positioningloopfrequency, headings, loopcount, gpsloopfrequency, odomruntime
 
     #take basic measurements
     difx = degrees_to_distance(xtracking_wheel.position(DEGREES), trackingwheelradius) #travel distance
@@ -463,7 +484,7 @@ def get_pos2():
     speed = abs(dify) * (1000 / positioningloopfrequency) #robot traveling velocity
     update_rotation()
     heading = drivetrain_bottom.heading(DEGREES)%360 #robot orientation heading
-    angle = (rotations[-1] - rotations[-2] + 180) % 360 - 180 #turn angle of robot
+    angle = (headings[-1] - headings[-2] + 180) % 360 - 180 #turn angle of robot
 
     #reset sensors
     xtracking_wheel.set_position(0, DEGREES)
@@ -564,7 +585,7 @@ def go_to(x, y, direction):
         #calculate drift heading correction (capped at 10)
         targetheading = math.degrees(math.atan2(difx, dify))
         update_rotation()
-        currentheading = rotations[-1]
+        currentheading = headings[-1]
         heading_error = (targetheading - currentheading + 180) % 360 - 180
         adjustment = min(abs(heading_error) / 12, maxadjustment)
 
@@ -589,8 +610,9 @@ def go_to(x, y, direction):
 
 
 def drivetrain_control_loop():
-    global acceleration, turnsensitivity
-    while competition.is_enabled():
+    global acceleration, turnsensitivity, joystickdeadband
+    global driverpm
+    while driverpm == 360:
         #get current velocity
         currentvelocityleft = left_drive_bottom.velocity(PERCENT)
         left1.set_velocity(currentvelocityleft, PERCENT)
@@ -599,10 +621,10 @@ def drivetrain_control_loop():
 
         #get target velocity
         speed_input = (controller1.axis3.position()*100/127)
-        if abs(speed_input) < 10:
+        if abs(speed_input) < 0:
             speed_input = 0
         turn_input = (controller1.axis1.position()*100/127 * turnsensitivity)
-        if abs(turn_input) < 10:
+        if abs(turn_input) < 0:
             turn_input = 0
         targetvelocityleft = speed_input + turn_input
         targetvelocityleft = max(-100, min(100, targetvelocityleft))
@@ -620,20 +642,20 @@ def drivetrain_control_loop():
         right3.set_velocity(abs(newvelocityright), PERCENT)
 
         #move
-        if targetvelocityleft > 0:
+        if targetvelocityleft > joystickdeadband:
             left_drive_bottom.spin(FORWARD)
             left3.spin(FORWARD)
-        elif targetvelocityleft < 0:
+        elif targetvelocityleft < -joystickdeadband:
             left_drive_bottom.spin(REVERSE)
             left3.spin(REVERSE)
         else:
             left_drive_bottom.stop()
             left3.stop()
 
-        if targetvelocityright > 0:
+        if targetvelocityright > joystickdeadband:
             right_drive_bottom.spin(FORWARD)
             right3.spin(FORWARD)
-        elif targetvelocityright < 0:
+        elif targetvelocityright < -joystickdeadband:
             right_drive_bottom.spin(REVERSE)
             right3.spin(REVERSE)
         else:
